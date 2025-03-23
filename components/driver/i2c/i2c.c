@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2015-2024 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2015-2025 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -685,7 +685,18 @@ static esp_err_t i2c_master_clear_bus(i2c_port_t i2c_num)
     i2c_set_pin(i2c_num, sda_io, scl_io, 1, 1, I2C_MODE_MASTER);
 #else
     i2c_ll_master_clr_bus(i2c_context[i2c_num].hal.dev, I2C_CLR_BUS_SCL_NUM, true);
+    // If the i2c master clear bus state machine got disturbed when its work, it would go into error state.
+    // The solution here is to use freertos tick counter to set time threshold. If its not return on time,
+    // return invalid state and turn off the state machine for avoiding its always wrong.
+    TickType_t start_tick = xTaskGetTickCount();
+    const TickType_t timeout_ticks = pdMS_TO_TICKS(I2C_CLR_BUS_TIMEOUT_MS);
     while (i2c_ll_master_is_bus_clear_done(i2c_context[i2c_num].hal.dev)) {
+        if ((xTaskGetTickCount() - start_tick) > timeout_ticks) {
+            ESP_LOGE(TAG, "clear bus failed.");
+            i2c_ll_master_clr_bus(i2c_context[i2c_num].hal.dev, 0, false);
+            ret = ESP_ERR_INVALID_STATE;
+            break;
+        }
     }
     i2c_ll_update(i2c_context[i2c_num].hal.dev);
 #endif
